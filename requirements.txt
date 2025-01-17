@@ -1,0 +1,11 @@
+langchain==0.1.0
+langchain-core==0.1.0
+langchain-community==0.0.10
+langchain-anthropic==0.0.1
+langgraph==0.0.10
+anthropic==0.7.0
+python-dotenv==1.0.0
+psycopg[binary]==3.1.12
+unstructured==0.10.30
+pandas==2.1.4
+openpyxl==3.1.2
