@@ -1,9 +1,12 @@
 from typing import List, Optional
 from pydantic import BaseModel
 from langchain_core.documents import Document
+from typing import Annotated
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
 
 class AgentState(BaseModel):
-    content: str
+    messages: Annotated[list[AnyMessage], add_messages]
     role: str
     next: str
     input_path: Optional[str] = None
