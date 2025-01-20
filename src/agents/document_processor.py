@@ -9,6 +9,7 @@ import glob
 import os
 from src.types import AgentState
 from src.utils.file_detection import detect_file_type
+from src.utils.timing import measure_time
 
 logger = logging.getLogger(__name__)
 
@@ -76,27 +77,95 @@ class DocumentProcessor(Runnable):
         Returns:
             Dictionary of extracted metadata
         """
-        metadata = {}
+        metadata = {
+            "years": [],
+            "expenditures": {},
+            "percent_changes": {}
+        }
         
-        # Extract years
         try:
-            years = [int(word) for word in content.split() 
-                    if word.isdigit() and 1900 < int(word) < 2100]
-            if years:
-                metadata["years"] = sorted(list(set(years)))
-                metadata["year_range"] = f"{min(years)}-{max(years)}"
-        except Exception as e:
-            logger.debug(f"Could not extract years: {str(e)}")
+            # Split content into lines and clean them
+            lines = [line.strip() for line in content.split('\n') if line.strip()]
             
-        # Extract monetary values
-        try:
-            monetary = [word for word in content.split() 
-                       if word.startswith('$') or word.replace('.', '').replace(',', '').isdigit()]
-            if monetary:
-                metadata["monetary_values"] = monetary
-        except Exception as e:
-            logger.debug(f"Could not extract monetary values: {str(e)}")
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                
+                # Skip header lines
+                if any(header in line.lower() for header in ['year', 'average expenditure', 'percent change']):
+                    i += 1
+                    continue
+
+                # Try multi-line format first
+                if line.isdigit() and 1900 < int(line) < 2100:
+                    # Check if we have enough lines ahead and they look like expenditure and percent change
+                    if i + 2 < len(lines):
+                        exp_line = lines[i + 1]
+                        change_line = lines[i + 2]
+                        
+                        # Check if next line looks like expenditure (starts with $ or is numeric)
+                        is_expenditure = (exp_line.startswith('$') or 
+                                        exp_line.replace('.', '').replace(',', '').isdigit() or
+                                        exp_line.replace('.', '').replace(',', '').replace('-', '').isdigit())
+                        
+                        # Check if third line looks like percent change (ends with % or is numeric)
+                        is_percent = (change_line.endswith('%') or 
+                                    change_line.replace('.', '').replace('-', '').isdigit())
+                        
+                        if is_expenditure and is_percent:
+                            try:
+                                year = int(line)
+                                expenditure = float(exp_line.replace('$', '').replace(',', ''))
+                                percent_change = float(change_line.replace('%', ''))
+                                
+                                metadata["years"].append(year)
+                                metadata["expenditures"][year] = expenditure
+                                metadata["percent_changes"][year] = percent_change
+                                
+                                # Skip the processed lines
+                                i += 3
+                                continue
+                            except ValueError:
+                                pass
+                
+                # Try single-line format
+                parts = line.split()
+                if len(parts) >= 3:
+                    try:
+                        # First part should be year
+                        if parts[0].isdigit() and 1900 < int(parts[0]) < 2100:
+                            year = int(parts[0])
+                            
+                            # Second part should be expenditure (starts with $ or is numeric)
+                            exp_str = parts[1].replace('$', '').replace(',', '')
+                            if exp_str.replace('.', '').replace('-', '').isdigit():
+                                expenditure = float(exp_str)
+                                
+                                # Third part should be percent change (ends with % or is numeric)
+                                change_str = parts[2].replace('%', '')
+                                if change_str.replace('.', '').replace('-', '').isdigit():
+                                    percent_change = float(change_str)
+                                    
+                                    metadata["years"].append(year)
+                                    metadata["expenditures"][year] = expenditure
+                                    metadata["percent_changes"][year] = percent_change
+                    except (ValueError, IndexError):
+                        pass
+                
+                i += 1
             
+            # Sort years and create year range
+            if metadata["years"]:
+                metadata["years"] = sorted(list(set(metadata["years"])))
+                metadata["year_range"] = f"{min(metadata['years'])}-{max(metadata['years'])}"
+                
+                # Add additional statistics
+                metadata["average_expenditure"] = sum(metadata["expenditures"].values()) / len(metadata["expenditures"])
+                metadata["total_percent_change"] = sum(metadata["percent_changes"].values())
+                
+        except Exception as e:
+            logger.debug(f"Error extracting metadata: {str(e)}")
+        
         return metadata
 
     def process_documents(self, documents: List[Document]) -> List[Document]:
@@ -122,6 +191,18 @@ class DocumentProcessor(Runnable):
                 # Extract additional metadata
                 metadata = self.extract_metadata(doc.page_content)
                 doc.metadata.update(metadata)
+                
+                # Add structured data for embeddings
+                structured_data = []
+                for year in metadata.get("years", []):
+                    year_data = {
+                        "year": year,
+                        "expenditure": metadata["expenditures"].get(year),
+                        "percent_change": metadata["percent_changes"].get(year)
+                    }
+                    structured_data.append(year_data)
+                
+                doc.metadata["structured_data"] = structured_data
                 
             logger.info(f"Successfully processed documents into {len(split_docs)} chunks")
             return split_docs
@@ -161,6 +242,7 @@ class DocumentProcessor(Runnable):
                 
         return all_documents
 
+    @measure_time
     def invoke(
         self,
         state: AgentState,

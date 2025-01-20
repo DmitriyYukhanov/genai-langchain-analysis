@@ -5,6 +5,7 @@ import logging
 from typing import Annotated, Dict, TypedDict
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
+import time
 
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -40,8 +41,8 @@ def supervisor_function(state: AgentState) -> Dict:
         logger.info("Starting vector storage")
         return {"next": "vector_store"}
         
-    # If we have content and stored vectors, run analysis
-    if state.content and state.vectors_stored:
+    # If we have HumanMessage and stored vectors, run analysis
+    if state.messages.count(HumanMessage) > 0 and state.vectors_stored:
         logger.info("Starting analysis")
         return {"next": "analysis"}
         
@@ -73,12 +74,6 @@ def create_agent_graph() -> Graph:
 
     # Add edges - define the flow between nodes
     workflow.add_edge("supervisor", "document_processor")
-    
-    # workflow.add_edge("document_processor", "supervisor")
-    # workflow.add_edge("supervisor", "vector_store")
-    # workflow.add_edge("vector_store", "supervisor")
-    # workflow.add_edge("supervisor", "analysis")
-    # workflow.add_edge("analysis", "supervisor")
 
     # Set the entry point
     workflow.set_entry_point("supervisor")
@@ -113,13 +108,16 @@ def main():
     graph = create_agent_graph()
 
     initial_state = AgentState(
-        content = args.query if args.query else "Start processing documents",
+        messages=[HumanMessage(content=args.query if args.query else "Start processing documents")],
         role = "human",
         next = "supervisor",
         input_path = args.input_path,
         processed_documents = None,
         vectors_stored = False
     )
+
+    # Measure total time
+    start_time = time.time()
 
     # Run the graph
     for output in graph.stream(initial_state):
@@ -134,6 +132,9 @@ def main():
             else:
                 logger.info(f"Intermediate output: {output}")
 
+    # Calculate and log total time
+    total_time = time.time() - start_time
+    logger.info(f"Total analysis time: {total_time:.2f} seconds")
     logger.info("Analysis complete!")
 
 if __name__ == "__main__":
