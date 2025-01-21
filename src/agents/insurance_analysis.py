@@ -4,6 +4,7 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.tools import Tool
 from langchain.chains import RetrievalQAWithSourcesChain
 from langchain_core.runnables import Runnable, RunnableConfig
+from langchain_core.messages import HumanMessage
 import logging
 import os
 from src.types import AgentState
@@ -104,6 +105,11 @@ class InsuranceAnalysisAgent(Runnable):
         Returns:
             Updated state
         """
+
+        if state.messages.count(HumanMessage) <= 0:
+            state.error = "No analysis query provided. Specify at least one message."
+            return state
+
         # TODO: Implement agent logic
         # Example:
         # 1. Extract query from state

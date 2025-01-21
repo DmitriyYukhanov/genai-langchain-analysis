@@ -21,7 +21,6 @@ from src.agents.vector_store import VectorStore
 from src.agents.insurance_analysis import InsuranceAnalysisAgent
 from src.types import AgentState
 
-# Load environment variables from .env
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
@@ -54,8 +53,8 @@ def supervisor_node(state: AgentState) -> Command[NodeName]:
         logger.info("Switching to vector storage")
         return Command(goto=VectorStore.NODE_NAME)
         
-    # If we have HumanMessage and stored vectors, run analysis
-    if state.messages.count(HumanMessage) > 0 and state.vectors_stored:
+    # If we have stored vectors, run analysis
+    if state.vectors_stored:
         logger.info("Switching to analysis")
         return Command(goto=InsuranceAnalysisAgent.NODE_NAME)
         
@@ -95,7 +94,8 @@ def main():
     parser.add_argument(
         '--input-path', 
         type=str, 
-        help='Path to Excel/HTML file or directory containing files'
+        help='Path to Excel/HTML file or directory containing files',
+        required=True
     )
     parser.add_argument(
         '--query', 

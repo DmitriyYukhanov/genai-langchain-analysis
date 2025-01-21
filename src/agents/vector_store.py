@@ -15,61 +15,76 @@ class VectorStore(Runnable):
     NODE_NAME = "vector_store"
 
     def __init__(self):
-        """Initialize the vector store with Anthropic embeddings and PGVector"""
-        self.connection_string = os.getenv("NEON_CONNECTION_STRING")
+        """Initialize the vector store with OpenAI embeddings and PGVector"""
+        self.connection_string = os.getenv("PGVECTOR_CONNECTION_STRING")
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        
         if not self.connection_string:
-            raise ValueError("NEON_CONNECTION_STRING environment variable is required")
+            raise ValueError("PGVECTOR_CONNECTION_STRING environment variable is required")
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
 
-        self.embeddings = AnthropicEmbeddings()
-        self.collection_name = "insurance_docs"
+        try:
+            # Using OpenAIEmbeddings
+            self.embeddings = OpenAIEmbeddings(
+                model="text-embedding-3-large",
+                openai_api_key=self.openai_api_key
+            )
+            self.collection_name = "insurance_docs"
 
-    def init_store(self) -> None:
-        """
-        TODO: Initialize PGVector store
-        """
-        logger.info("Initializing vector store")
-        # TODO: Implement store initialization
-        pass
+            self.store = PGVector(
+                    embeddings=self.embeddings,
+                    collection_name=self.collection_name,
+                    connection=self.connection_string,
+                    use_jsonb=True,
+                )
+            logger.info(f"Successfully initialized vector store: {self.collection_name}")
+        except Exception as e:
+            logger.error(f"Error initializing vector store: {str(e)}")
+            raise
 
     def add_documents(self, documents: List[Document]) -> None:
-        """
-        TODO: Add documents to vector store
-
-        Args:
-            documents: List of documents to add
-        """
+        """Add documents to vector store"""
         logger.info(f"Adding {len(documents)} documents to vector store")
-        # TODO: Implement document addition
-        pass
+        if not hasattr(self, 'store'):
+            self.init_store()
+        try:
+            self.store.add_documents(documents)
+            logger.info("Successfully added documents to vector store")
+        except Exception as e:
+            logger.error(f"Error adding documents to vector store: {str(e)}")
+            raise
 
     def similarity_search(self, query: str, k: int = 4) -> List[Document]:
-        """
-        TODO: Perform similarity search
-
-        Args:
-            query: Search query
-            k: Number of results to return
-
-        Returns:
-            List of similar documents
-        """
+        """Perform similarity search"""
         logger.info(f"Performing similarity search for: {query}")
-        # TODO: Implement similarity search
-        return []
+        if not hasattr(self, 'store'):
+            self.init_store()
+        try:
+            results = self.store.similarity_search(query, k=k)
+            logger.info(f"Found {len(results)} similar documents")
+            return results
+        except Exception as e:
+            logger.error(f"Error performing similarity search: {str(e)}")
+            return []
 
-    def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Main agent function to be called by the supervisor
-
-        Args:
-            state: Current state of the system
-
-        Returns:
-            Updated state
-        """
-        # TODO: Implement agent logic
-        # Example:
-        # 1. Check if there are new documents to store
-        # 2. Add documents to vector store
-        # 3. Update state with storage status
-        return state
+    @measure_time
+    def invoke(
+        self,
+        state: AgentState,
+        config: RunnableConfig | None = None,
+    ) -> AgentState:
+        """Process state in the workflow"""
+        try:
+            if state.processed_documents:
+                self.add_documents(state.processed_documents)
+                state.vectors_stored = True
+                return state
+            
+            state.error = "No processed documents found"
+            return state
+            
+        except Exception as e:
+            logger.error(f"Error in vector store: {str(e)}")
+            state.error = str(e)
+            return state
