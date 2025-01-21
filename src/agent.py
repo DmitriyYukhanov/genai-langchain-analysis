@@ -3,16 +3,18 @@
 import argparse
 import logging
 from typing import Annotated, Dict, TypedDict
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, Literal
 from dotenv import load_dotenv
 import time
+from enum import Enum
 
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage, HumanMessage
-from langgraph.graph import END, Graph, MessageGraph, StateGraph
+from langgraph.graph import START, END, Graph, MessageGraph, StateGraph
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.agents import AgentFinish
+from langgraph.types import Command
 
 from src.agents.document_processor import DocumentProcessor
 from src.agents.vector_store import VectorStore
@@ -25,58 +27,65 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def supervisor_function(state: AgentState) -> Dict:
+SUPERVISOR_NODE = "supervisor"
+
+class NodeName(str, Enum):
+    DOC_PROCESSOR = DocumentProcessor.NODE_NAME
+    VECTOR_STORE = VectorStore.NODE_NAME
+    INSURANCE_ANALYSIS = InsuranceAnalysisAgent.NODE_NAME
+
+def supervisor_node(state: AgentState) -> Command[NodeName]:
     """
     The supervisor function decides which agent should run next based on the current state.
     """
     logger.info(f"Supervisor received state: {state}")
+
+    if state.error:
+        logger.error(f"Error: {state.error}")
+        return Command(goto=END)
     
     # If we have an input path but no processed documents, process documents first
     if state.input_path and not state.processed_documents:
-        logger.info("Starting document processing")
-        return {"next": "document_processor"}
+        logger.info("Switching to document processing")
+        return Command(goto=DocumentProcessor.NODE_NAME)
         
     # If we have processed documents but no vectors stored, store them next
     if state.processed_documents and not state.vectors_stored:
-        logger.info("Starting vector storage")
-        return {"next": "vector_store"}
+        logger.info("Switching to vector storage")
+        return Command(goto=VectorStore.NODE_NAME)
         
     # If we have HumanMessage and stored vectors, run analysis
     if state.messages.count(HumanMessage) > 0 and state.vectors_stored:
-        logger.info("Starting analysis")
-        return {"next": "analysis"}
+        logger.info("Switching to analysis")
+        return Command(goto=InsuranceAnalysisAgent.NODE_NAME)
         
     logger.info("No more tasks to process")
-    return {"next": END}
+    return Command(goto=END)
 
 def create_agent_graph() -> Graph:
     """
     Creates the agent workflow graph.
     """
-    # Initialize vector store first
+
     vector_store = VectorStore()
-    vector_store.init_store()
-    
-    # Initialize agents
-    doc_processor = DocumentProcessor(vector_store)
+    doc_processor = DocumentProcessor()
     analysis_agent = InsuranceAnalysisAgent(vector_store)
 
     # Create the workflow
     workflow = StateGraph(AgentState)
 
-    # Add nodes to the graph
-    workflow.add_node("document_processor", doc_processor)
-    workflow.add_node("vector_store", vector_store)
-    workflow.add_node("analysis", analysis_agent)
+    workflow.set_entry_point(SUPERVISOR_NODE)
     
-    # Add the supervisor node
-    workflow.add_node("supervisor", supervisor_function)
+    # Add nodes to the graph
+    workflow.add_node(SUPERVISOR_NODE, supervisor_node)
+    workflow.add_node(DocumentProcessor.NODE_NAME, doc_processor)
+    workflow.add_node(VectorStore.NODE_NAME, vector_store)
+    workflow.add_node(InsuranceAnalysisAgent.NODE_NAME, analysis_agent)
 
-    # Add edges - define the flow between nodes
-    workflow.add_edge("supervisor", "document_processor")
-
-    # Set the entry point
-    workflow.set_entry_point("supervisor")
+    # Add edges to the graph
+    workflow.add_edge(DocumentProcessor.NODE_NAME, SUPERVISOR_NODE)
+    workflow.add_edge(VectorStore.NODE_NAME, SUPERVISOR_NODE)
+    workflow.add_edge(InsuranceAnalysisAgent.NODE_NAME, SUPERVISOR_NODE)
 
     # Compile the graph
     return workflow.compile()
@@ -110,7 +119,6 @@ def main():
     initial_state = AgentState(
         messages=[HumanMessage(content=args.query if args.query else "Start processing documents")],
         role = "human",
-        next = "supervisor",
         input_path = args.input_path,
         processed_documents = None,
         vectors_stored = False

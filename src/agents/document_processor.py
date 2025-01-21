@@ -120,7 +120,9 @@ class MetadataExtractor:
             metadata["total_percent_change"] = sum(metadata["percent_changes"].values())
 
 class DocumentProcessor(Runnable):
-    def __init__(self, vector_store):
+    NODE_NAME:str = "doc_processor"
+
+    def __init__(self):
         """Initialize the document processor with text splitter configuration"""
         super().__init__()
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -129,7 +131,6 @@ class DocumentProcessor(Runnable):
             length_function=len,
             is_separator_regex=False,
         )
-        self.vector_store = vector_store
         self.metadata_extractor = MetadataExtractor()
 
     def load_excel(self, file_path: str) -> List[Document]:
@@ -262,7 +263,6 @@ class DocumentProcessor(Runnable):
         """
         try:
             if not state.input_path:
-                state.next = "end"
                 state.error = "No input path specified"
                 return state
 
@@ -274,27 +274,20 @@ class DocumentProcessor(Runnable):
             elif path.is_dir():
                 processed_docs = self.process_directory(str(path))
             else:
-                state.next = "end"
                 state.error = f"Invalid input path: {state.input_path}"
                 return state
 
             if processed_docs:
-                state.next = "vector_store"
                 state.processed_documents = processed_docs
                 return state
             
-            state.next = "end"
             state.error = "No documents were processed"
             return state
                 
         except Exception as e:
             logger.error(f"Error in document processing: {str(e)}")
-            return AgentState(
-                content=state.content,
-                role=state.role,
-                next="end",
-                input_path=state.input_path,
-                processed_documents=None,
-                vectors_stored=False,
-                error=str(e)
-            )
+            state.error = str(e)
+            state.processed_documents = None
+            state.vectors_stored = False
+            return state
+

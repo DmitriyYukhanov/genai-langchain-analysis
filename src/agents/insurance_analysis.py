@@ -3,13 +3,19 @@ from langchain_anthropic import ChatAnthropic
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.tools import Tool
 from langchain.chains import RetrievalQAWithSourcesChain
+from langchain_core.runnables import Runnable, RunnableConfig
 import logging
+import os
+from src.types import AgentState
+from src.utils.timing import measure_time
 
 from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
-class InsuranceAnalysisAgent:
+class InsuranceAnalysisAgent(Runnable):
+    NODE_NAME = "analysis"
+
     def __init__(self, vector_store: VectorStore):
         """
         Initialize the analysis agent with necessary components
@@ -18,7 +24,10 @@ class InsuranceAnalysisAgent:
             vector_store: Initialized VectorStore instance
         """
         self.vector_store = vector_store
-        self.llm = ChatAnthropic()
+        self.llm = ChatAnthropic(
+            model_name="claude-3-5-sonnet-20241022",
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
+        )
 
         # Initialize retrieval chain
         self.retrieval_chain = self._create_retrieval_chain()
@@ -80,7 +89,12 @@ class InsuranceAnalysisAgent:
         # TODO: Implement trend analysis
         return ""
 
-    def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    @measure_time
+    def invoke(
+        self,
+        state: AgentState,
+        config: RunnableConfig | None = None,
+    ) -> AgentState:
         """
         Main agent function to be called by the supervisor
 
@@ -95,4 +109,6 @@ class InsuranceAnalysisAgent:
         # 1. Extract query from state
         # 2. Run analysis
         # 3. Update state with results
+
+        state.error = "Could not analyze trends"
         return state

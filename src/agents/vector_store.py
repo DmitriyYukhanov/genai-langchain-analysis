@@ -1,13 +1,19 @@
 import os
 from typing import List, Dict, Any
 from langchain_core.documents import Document
-from langchain.vectorstores.pgvector import PGVector
-from langchain_anthropic import AnthropicEmbeddings
+from langchain_postgres import PGVector
+from langchain_openai import OpenAIEmbeddings
 import logging
+from langchain_core.runnables import Runnable, RunnableConfig
+from sqlalchemy import create_engine
+from src.types import AgentState
+from src.utils.timing import measure_time
 
 logger = logging.getLogger(__name__)
 
-class VectorStore:
+class VectorStore(Runnable):
+    NODE_NAME = "vector_store"
+
     def __init__(self):
         """Initialize the vector store with Anthropic embeddings and PGVector"""
         self.connection_string = os.getenv("NEON_CONNECTION_STRING")
