@@ -13,6 +13,112 @@ from src.utils.timing import measure_time
 
 logger = logging.getLogger(__name__)
 
+class MetadataExtractor:
+    def __init__(self):
+        pass
+
+    def extract(self, content: str) -> Dict[str, Any]:
+        """
+        Extract metadata from document content
+        
+        Args:
+            content: Document content string
+            
+        Returns:
+            Dictionary of extracted metadata
+        """
+        metadata = {
+            "years": [],
+            "expenditures": {},
+            "percent_changes": {}
+        }
+        
+        try:
+            lines = self._clean_lines(content)
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                if self._is_header_line(line):
+                    i += 1
+                    continue
+
+                if self._is_year_line(line):
+                    if self._is_valid_multiline(lines, i):
+                        year, expenditure, percent_change = self._extract_multiline(lines, i)
+                        self._update_metadata(metadata, year, expenditure, percent_change)
+                        i += 3
+                        continue
+
+                if self._is_valid_singleline(line):
+                    year, expenditure, percent_change = self._extract_singleline(line)
+                    self._update_metadata(metadata, year, expenditure, percent_change)
+
+                i += 1
+
+            self._finalize_metadata(metadata)
+        except Exception as e:
+            logger.debug(f"Error extracting metadata: {str(e)}")
+        
+        return metadata
+
+    def _clean_lines(self, content: str) -> List[str]:
+        return [line.strip() for line in content.split('\n') if line.strip()]
+
+    def _is_header_line(self, line: str) -> bool:
+        return any(header in line.lower() for header in ['year', 'average expenditure', 'percent change'])
+
+    def _is_year_line(self, line: str) -> bool:
+        return line.isdigit() and 1900 < int(line) < 2100
+
+    def _is_valid_multiline(self, lines: List[str], index: int) -> bool:
+        if index + 2 >= len(lines):
+            return False
+        exp_line = lines[index + 1]
+        change_line = lines[index + 2]
+        return self._is_expenditure_line(exp_line) and self._is_percent_change_line(change_line)
+
+    def _is_expenditure_line(self, line: str) -> bool:
+        return (line.startswith('$') or 
+                line.replace('.', '').replace(',', '').isdigit() or
+                line.replace('.', '').replace(',', '').replace('-', '').isdigit())
+
+    def _is_percent_change_line(self, line: str) -> bool:
+        return (line.endswith('%') or 
+                line.replace('.', '').replace('-', '').isdigit())
+
+    def _extract_multiline(self, lines: List[str], index: int) -> (int, float, float):
+        year = int(lines[index])
+        expenditure = float(lines[index + 1].replace('$', '').replace(',', ''))
+        percent_change = float(lines[index + 2].replace('%', ''))
+        return year, expenditure, percent_change
+
+    def _is_valid_singleline(self, line: str) -> bool:
+        parts = line.split()
+        if len(parts) < 3:
+            return False
+        return (self._is_year_line(parts[0]) and 
+                self._is_expenditure_line(parts[1]) and 
+                self._is_percent_change_line(parts[2]))
+
+    def _extract_singleline(self, line: str) -> (int, float, float):
+        parts = line.split()
+        year = int(parts[0])
+        expenditure = float(parts[1].replace('$', '').replace(',', ''))
+        percent_change = float(parts[2].replace('%', ''))
+        return year, expenditure, percent_change
+
+    def _update_metadata(self, metadata: Dict[str, Any], year: int, expenditure: float, percent_change: float):
+        metadata["years"].append(year)
+        metadata["expenditures"][year] = expenditure
+        metadata["percent_changes"][year] = percent_change
+
+    def _finalize_metadata(self, metadata: Dict[str, Any]):
+        if metadata["years"]:
+            metadata["years"] = sorted(list(set(metadata["years"])))
+            metadata["year_range"] = f"{min(metadata['years'])}-{max(metadata['years'])}"
+            metadata["average_expenditure"] = sum(metadata["expenditures"].values()) / len(metadata["expenditures"])
+            metadata["total_percent_change"] = sum(metadata["percent_changes"].values())
+
 class DocumentProcessor(Runnable):
     def __init__(self, vector_store):
         """Initialize the document processor with text splitter configuration"""
@@ -24,6 +130,7 @@ class DocumentProcessor(Runnable):
             is_separator_regex=False,
         )
         self.vector_store = vector_store
+        self.metadata_extractor = MetadataExtractor()
 
     def load_excel(self, file_path: str) -> List[Document]:
         """
@@ -68,105 +175,7 @@ class DocumentProcessor(Runnable):
             return []
 
     def extract_metadata(self, content: str) -> Dict[str, Any]:
-        """
-        Extract metadata from document content
-        
-        Args:
-            content: Document content string
-            
-        Returns:
-            Dictionary of extracted metadata
-        """
-        metadata = {
-            "years": [],
-            "expenditures": {},
-            "percent_changes": {}
-        }
-        
-        try:
-            # Split content into lines and clean them
-            lines = [line.strip() for line in content.split('\n') if line.strip()]
-            
-            i = 0
-            while i < len(lines):
-                line = lines[i]
-                
-                # Skip header lines
-                if any(header in line.lower() for header in ['year', 'average expenditure', 'percent change']):
-                    i += 1
-                    continue
-
-                # Try multi-line format first
-                if line.isdigit() and 1900 < int(line) < 2100:
-                    # Check if we have enough lines ahead and they look like expenditure and percent change
-                    if i + 2 < len(lines):
-                        exp_line = lines[i + 1]
-                        change_line = lines[i + 2]
-                        
-                        # Check if next line looks like expenditure (starts with $ or is numeric)
-                        is_expenditure = (exp_line.startswith('$') or 
-                                        exp_line.replace('.', '').replace(',', '').isdigit() or
-                                        exp_line.replace('.', '').replace(',', '').replace('-', '').isdigit())
-                        
-                        # Check if third line looks like percent change (ends with % or is numeric)
-                        is_percent = (change_line.endswith('%') or 
-                                    change_line.replace('.', '').replace('-', '').isdigit())
-                        
-                        if is_expenditure and is_percent:
-                            try:
-                                year = int(line)
-                                expenditure = float(exp_line.replace('$', '').replace(',', ''))
-                                percent_change = float(change_line.replace('%', ''))
-                                
-                                metadata["years"].append(year)
-                                metadata["expenditures"][year] = expenditure
-                                metadata["percent_changes"][year] = percent_change
-                                
-                                # Skip the processed lines
-                                i += 3
-                                continue
-                            except ValueError:
-                                pass
-                
-                # Try single-line format
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        # First part should be year
-                        if parts[0].isdigit() and 1900 < int(parts[0]) < 2100:
-                            year = int(parts[0])
-                            
-                            # Second part should be expenditure (starts with $ or is numeric)
-                            exp_str = parts[1].replace('$', '').replace(',', '')
-                            if exp_str.replace('.', '').replace('-', '').isdigit():
-                                expenditure = float(exp_str)
-                                
-                                # Third part should be percent change (ends with % or is numeric)
-                                change_str = parts[2].replace('%', '')
-                                if change_str.replace('.', '').replace('-', '').isdigit():
-                                    percent_change = float(change_str)
-                                    
-                                    metadata["years"].append(year)
-                                    metadata["expenditures"][year] = expenditure
-                                    metadata["percent_changes"][year] = percent_change
-                    except (ValueError, IndexError):
-                        pass
-                
-                i += 1
-            
-            # Sort years and create year range
-            if metadata["years"]:
-                metadata["years"] = sorted(list(set(metadata["years"])))
-                metadata["year_range"] = f"{min(metadata['years'])}-{max(metadata['years'])}"
-                
-                # Add additional statistics
-                metadata["average_expenditure"] = sum(metadata["expenditures"].values()) / len(metadata["expenditures"])
-                metadata["total_percent_change"] = sum(metadata["percent_changes"].values())
-                
-        except Exception as e:
-            logger.debug(f"Error extracting metadata: {str(e)}")
-        
-        return metadata
+        return self.metadata_extractor.extract(content)
 
     def process_documents(self, documents: List[Document]) -> List[Document]:
         """
