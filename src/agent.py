@@ -9,7 +9,7 @@ import time
 from enum import Enum
 
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import START, END, Graph, MessageGraph, StateGraph
 from langchain_anthropic import ChatAnthropic
 from langchain.agents import AgentExecutor, create_openai_tools_agent
@@ -37,35 +37,49 @@ def supervisor_node(state: AgentState) -> Command[NodeName]:
     """
     The supervisor function decides which agent should run next based on the current state.
     """
-    logger.info(f"Supervisor received state: {state}")
+    try:
+        # Create a concise state summary
+        state_summary = {
+            "has_error": bool(state.error),
+            "has_input": bool(state.input_path),
+            "docs_processed": bool(state.processed_documents),
+            "vectors_stored": state.vectors_stored,
+            "has_messages": bool(state.messages)
+        }
+        logger.info("Supervisor state: %s", state_summary)
 
-    if state.error:
-        logger.error(f"Error: {state.error}")
+        # Handle errors first
+        if state.error:
+            logger.error(f"Error encountered: {state.error}")
+            return Command(goto=END)
+        
+        # Determine next step based on state
+        if state.input_path and not state.processed_documents:
+            logger.info("Starting document processing")
+            return Command(goto=DocumentProcessor.NODE_NAME)
+            
+        if state.processed_documents and not state.vectors_stored:
+            logger.info("Starting vector storage")
+            return Command(goto=VectorStore.NODE_NAME)
+            
+        if state.vectors_stored and any(isinstance(msg, HumanMessage) and msg.content for msg in state.messages):
+            logger.info("Starting analysis")
+            return Command(goto=AnalysisAgent.NODE_NAME)
+            
+        # If we reach here, we're done
+        logger.info("Workflow complete")
         return Command(goto=END)
-    
-    # If we have an input path but no processed documents, process documents first
-    if state.input_path and not state.processed_documents:
-        logger.info("Switching to document processing")
-        return Command(goto=DocumentProcessor.NODE_NAME)
-        
-    # If we have processed documents but no vectors stored, store them next
-    if state.processed_documents and not state.vectors_stored:
-        logger.info("Switching to vector storage")
-        return Command(goto=VectorStore.NODE_NAME)
-        
-    # If we have stored vectors, run analysis
-    if state.vectors_stored:
-        logger.info("Switching to analysis")
-        return Command(goto=AnalysisAgent.NODE_NAME)
-        
-    logger.info("No more tasks to process")
-    return Command(goto=END)
+
+    except Exception as e:
+        logger.error(f"Error in supervisor: {str(e)}")
+        state.error = f"Supervisor error: {str(e)}"
+        return Command(goto=END)
 
 def create_agent_graph() -> Graph:
     """
-    Creates the agent workflow graph.
+    Creates the agent workflow graph with dynamic routing based on agent capabilities.
     """
-
+    # Initialize core components
     vector_store = VectorStore()
     doc_processor = DocumentProcessor()
     analysis_agent = AnalysisAgent(vector_store)
@@ -90,60 +104,81 @@ def create_agent_graph() -> Graph:
     return workflow.compile()
 
 def main():
-    parser = argparse.ArgumentParser(description='Insurance Data Analysis Pipeline')
-    parser.add_argument(
-        '--input-path', 
-        type=str, 
-        help='Path to Excel/HTML file or directory containing files',
-        required=True
-    )
-    parser.add_argument(
-        '--query', 
-        type=str, 
-        help='Analysis query to run'
-    )
-    parser.add_argument(
-        '--debug', 
-        action='store_true', 
-        help='Enable debug logging'
-    )
+    """Main entry point for the analysis pipeline"""
+    try:
+        parser = argparse.ArgumentParser(description='Insurance Data Analysis Pipeline')
+        parser.add_argument(
+            '--input-path', 
+            type=str, 
+            help='Path to Excel/HTML file or directory containing files',
+            required=True
+        )
+        parser.add_argument(
+            '--query', 
+            type=str, 
+            help='Analysis query to run',
+            default="Analyze documents and tell any interesting findings, insights, or highlights you can find."
+        )
+        parser.add_argument(
+            '--debug', 
+            action='store_true', 
+            help='Enable debug logging'
+        )
 
-    args = parser.parse_args()
+        args = parser.parse_args()
 
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+        if args.debug:
+            logging.getLogger().setLevel(logging.DEBUG)
 
-    # Create the agent graph
-    graph = create_agent_graph()
+        logger.info("Initializing analysis pipeline...")
+        logger.info(f"Input path: {args.input_path}")
+        logger.info(f"Query: {args.query}")
 
-    initial_state = AgentState(
-        messages=[HumanMessage(content=args.query if args.query else "Analyze documents and tell any interesting findings, insights, or highlight you can find out.")],
-        role = "human",
-        input_path = args.input_path,
-        processed_documents = None,
-        vectors_stored = False
-    )
+        # Create the agent graph
+        graph = create_agent_graph()
 
-    # Measure total time
-    start_time = time.time()
+        # Initialize state
+        initial_state = AgentState(
+            messages=[HumanMessage(content=args.query)],
+            role="human",
+            input_path=args.input_path,
+            processed_documents=None,
+            vectors_stored=False,
+            error=None
+        )
 
-    # Run the graph
-    for output in graph.stream(initial_state):
-        if "__end__" not in output:
-            if output.get("processed_documents"):
-                docs = output["processed_documents"]
-                logger.info(f"Successfully processed {len(docs)} document chunks")
-                if docs:
-                    logger.info("\nSample from first document:")
-                    logger.info(f"Content: {docs[0].page_content[:200]}...")
-                    logger.info(f"Metadata: {docs[0].metadata}")
-            else:
-                logger.info(f"Intermediate output: {output}")
+        # Measure total time
+        start_time = time.time()
 
-    # Calculate and log total time
-    total_time = time.time() - start_time
-    logger.info(f"Total analysis time: {total_time:.2f} seconds")
-    logger.info("Analysis complete!")
+        # Run the graph with progress tracking
+        logger.info("Starting analysis...")
+        for output in graph.stream(initial_state):
+            if "__end__" not in output:
+                if "error" in output and output["error"]:
+                    logger.error(f"Error in pipeline: {output['error']}")
+                    break
+                    
+                if output.get("processed_documents"):
+                    docs = output["processed_documents"]
+                    logger.info(f"Successfully processed {len(docs)} document chunks")
+                    if docs:
+                        logger.info("\nSample from first document:")
+                        logger.info(f"Content: {docs[0].page_content[:200]}...")
+                        logger.info(f"Metadata: {docs[0].metadata}")
+                
+                if output.get("messages"):
+                    for msg in output["messages"]:
+                        if isinstance(msg, AIMessage):
+                            logger.info(f"\nAnalysis Result:\n{msg.content}\n")
+
+        # Calculate and log total time
+        total_time = time.time() - start_time
+        logger.info(f"Total analysis time: {total_time:.2f} seconds")
+        logger.info("Analysis complete!")
+
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     main()

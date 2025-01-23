@@ -86,7 +86,7 @@ class MetadataExtractor:
         return (line.endswith('%') or 
                 line.replace('.', '').replace('-', '').isdigit())
 
-    def _extract_multiline(self, lines: List[str], index: int) -> (int, float, float):
+    def _extract_multiline(self, lines: List[str], index: int) -> tuple[int, float, float]:
         year = int(lines[index])
         expenditure = float(lines[index + 1].replace('$', '').replace(',', ''))
         percent_change = float(lines[index + 2].replace('%', ''))
@@ -100,7 +100,7 @@ class MetadataExtractor:
                 self._is_expenditure_line(parts[1]) and 
                 self._is_percent_change_line(parts[2]))
 
-    def _extract_singleline(self, line: str) -> (int, float, float):
+    def _extract_singleline(self, line: str) -> tuple[int, float, float]:
         parts = line.split()
         year = int(parts[0])
         expenditure = float(parts[1].replace('$', '').replace(',', ''))
