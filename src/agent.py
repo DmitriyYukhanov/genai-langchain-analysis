@@ -18,7 +18,7 @@ from langgraph.types import Command
 
 from src.agents.document_processor import DocumentProcessor
 from src.agents.vector_store import VectorStore
-from src.agents.insurance_analysis import InsuranceAnalysisAgent
+from src.agents.analysis import AnalysisAgent
 from src.types import AgentState
 
 load_dotenv()
@@ -31,7 +31,7 @@ SUPERVISOR_NODE = "supervisor"
 class NodeName(str, Enum):
     DOC_PROCESSOR = DocumentProcessor.NODE_NAME
     VECTOR_STORE = VectorStore.NODE_NAME
-    INSURANCE_ANALYSIS = InsuranceAnalysisAgent.NODE_NAME
+    ANALYSIS_AGENT = AnalysisAgent.NODE_NAME
 
 def supervisor_node(state: AgentState) -> Command[NodeName]:
     """
@@ -56,7 +56,7 @@ def supervisor_node(state: AgentState) -> Command[NodeName]:
     # If we have stored vectors, run analysis
     if state.vectors_stored:
         logger.info("Switching to analysis")
-        return Command(goto=InsuranceAnalysisAgent.NODE_NAME)
+        return Command(goto=AnalysisAgent.NODE_NAME)
         
     logger.info("No more tasks to process")
     return Command(goto=END)
@@ -68,7 +68,7 @@ def create_agent_graph() -> Graph:
 
     vector_store = VectorStore()
     doc_processor = DocumentProcessor()
-    analysis_agent = InsuranceAnalysisAgent(vector_store)
+    analysis_agent = AnalysisAgent(vector_store)
 
     # Create the workflow
     workflow = StateGraph(AgentState)
@@ -79,12 +79,12 @@ def create_agent_graph() -> Graph:
     workflow.add_node(SUPERVISOR_NODE, supervisor_node)
     workflow.add_node(DocumentProcessor.NODE_NAME, doc_processor)
     workflow.add_node(VectorStore.NODE_NAME, vector_store)
-    workflow.add_node(InsuranceAnalysisAgent.NODE_NAME, analysis_agent)
+    workflow.add_node(AnalysisAgent.NODE_NAME, analysis_agent)
 
     # Add edges to the graph
     workflow.add_edge(DocumentProcessor.NODE_NAME, SUPERVISOR_NODE)
     workflow.add_edge(VectorStore.NODE_NAME, SUPERVISOR_NODE)
-    workflow.add_edge(InsuranceAnalysisAgent.NODE_NAME, SUPERVISOR_NODE)
+    workflow.add_edge(AnalysisAgent.NODE_NAME, SUPERVISOR_NODE)
 
     # Compile the graph
     return workflow.compile()
@@ -117,7 +117,7 @@ def main():
     graph = create_agent_graph()
 
     initial_state = AgentState(
-        messages=[HumanMessage(content=args.query if args.query else "Start processing documents")],
+        messages=[HumanMessage(content=args.query if args.query else "Analyze documents and tell any interesting findings, insights, or highlight you can find out.")],
         role = "human",
         input_path = args.input_path,
         processed_documents = None,

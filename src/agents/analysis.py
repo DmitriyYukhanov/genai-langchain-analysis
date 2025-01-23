@@ -14,7 +14,7 @@ from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
-class InsuranceAnalysisAgent(Runnable):
+class AnalysisAgent(Runnable):
     NODE_NAME = "analysis"
 
     def __init__(self, vector_store: VectorStore):
@@ -25,9 +25,14 @@ class InsuranceAnalysisAgent(Runnable):
             vector_store: Initialized VectorStore instance
         """
         self.vector_store = vector_store
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        if not self.anthropic_api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+
         self.llm = ChatAnthropic(
             model_name="claude-3-5-sonnet-20241022",
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
+            anthropic_api_key=self.anthropic_api_key
         )
 
         # Initialize retrieval chain
@@ -60,7 +65,7 @@ class InsuranceAnalysisAgent(Runnable):
             Tool(
                 name="search_documents",
                 func=self.vector_store.similarity_search,
-                description="Search through insurance documents"
+                description="Search through the documents"
             ),
             # TODO: Add more tools for analysis
         ]
@@ -78,7 +83,7 @@ class InsuranceAnalysisAgent(Runnable):
 
     def analyze_trends(self, query: str) -> str:
         """
-        TODO: Analyze insurance trends
+        TODO: Analyze trends
 
         Args:
             query: Analysis query
@@ -105,8 +110,8 @@ class InsuranceAnalysisAgent(Runnable):
         Returns:
             Updated state
         """
-
-        if state.messages.count(HumanMessage) <= 0:
+        # Check for a HumanMessage with content
+        if not any(isinstance(msg, HumanMessage) and msg.content for msg in state.messages):
             state.error = "No analysis query provided. Specify at least one message."
             return state
 
