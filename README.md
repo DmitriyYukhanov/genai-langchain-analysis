@@ -25,7 +25,7 @@ In this session, you'll build an AI-powered data analysis pipeline that processe
 1. Python packages:
 
 ```
-pip install langchain langchain-core langchain-community langchain-anthropic langchain-postgres python-dotenv psycopg[binary] openai langchain-openai anthropic langchain_postgres psycopg2 networkx transformers
+pip install langchain langchain-core langchain-community langchain-anthropic langchain-postgres python-dotenv psycopg[binary] openai langchain-openai anthropic langchain_postgres psycopg2 networkx transformers tensorflow
 ```
 
 2. API Keys & Services:
