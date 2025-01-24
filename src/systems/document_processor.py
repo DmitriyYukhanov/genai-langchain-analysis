@@ -7,7 +7,7 @@ from langchain_core.runnables import Runnable, RunnableConfig
 import logging
 import glob
 import os
-from src.types import AgentState
+from src.systems.types import SystemState
 from src.utils.file_detection import detect_file_type
 from src.utils.timing import measure_time
 
@@ -255,9 +255,9 @@ class DocumentProcessor(Runnable):
     @measure_time
     def invoke(
         self,
-        state: AgentState,
+        state: SystemState,
         config: RunnableConfig | None = None,
-    ) -> AgentState:
+    ) -> SystemState:
         """
         Process documents and update state
         """

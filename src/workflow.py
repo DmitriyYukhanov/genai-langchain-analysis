@@ -16,10 +16,10 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.agents import AgentFinish
 from langgraph.types import Command
 
-from src.agents.document_processor import DocumentProcessor
-from src.agents.vector_store import VectorStore
-from src.agents.analysis import AnalysisAgent
-from src.types import AgentState
+from src.systems.document_processor import DocumentProcessor
+from src.systems.vector_store import VectorStore
+from src.systems.analysis_graph import AnalysisAgent
+from src.systems.types import SystemState
 
 load_dotenv()
 
@@ -33,7 +33,7 @@ class NodeName(str, Enum):
     VECTOR_STORE = VectorStore.NODE_NAME
     ANALYSIS_AGENT = AnalysisAgent.NODE_NAME
 
-def supervisor_node(state: AgentState) -> Command[NodeName]:
+def supervisor_node(state: SystemState) -> Command[NodeName]:
     """
     The supervisor function decides which agent should run next based on the current state.
     """
@@ -91,7 +91,7 @@ def create_agent_graph() -> Graph:
     analysis_agent = AnalysisAgent(vector_store)
 
     # Create the workflow
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(SystemState)
 
     workflow.set_entry_point(SUPERVISOR_NODE)
     
@@ -112,7 +112,7 @@ def create_agent_graph() -> Graph:
 def main():
     """Main entry point for the analysis pipeline"""
     try:
-        parser = argparse.ArgumentParser(description='Insurance Data Analysis Pipeline')
+        parser = argparse.ArgumentParser(description='Data Analysis Pipeline')
         parser.add_argument(
             '--input-path', 
             type=str, 
@@ -144,7 +144,7 @@ def main():
         graph = create_agent_graph()
 
         # Initialize state
-        initial_state = AgentState(
+        initial_state = SystemState(
             messages=[HumanMessage(content=args.query)],
             role="human",
             input_path=args.input_path,

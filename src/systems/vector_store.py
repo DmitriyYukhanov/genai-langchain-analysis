@@ -7,7 +7,7 @@ from langchain.embeddings import CacheBackedEmbeddings
 import logging
 from langchain_core.runnables import Runnable, RunnableConfig
 from sqlalchemy import create_engine
-from src.types import AgentState
+from src.systems.types import SystemState
 from src.utils.timing import measure_time
 import time
 
@@ -118,9 +118,9 @@ class VectorStore(Runnable):
     @measure_time
     def invoke(
         self,
-        state: AgentState,
+        state: SystemState,
         config: RunnableConfig | None = None,
-    ) -> AgentState:
+    ) -> SystemState:
         """Process state in the workflow"""
         try:
             if state.processed_documents:

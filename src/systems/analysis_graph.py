@@ -12,7 +12,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain.prompts import PromptTemplate
 import logging
 import os
-from src.types import AgentState
+from src.systems.types import SystemState
 from src.utils.timing import measure_time
 import json
 from openai import OpenAI
@@ -356,9 +356,9 @@ Analyze the query and select up to {MAX_SELECTED_AGENTS} most relevant agents. C
     @measure_time
     def invoke(
         self,
-        state: AgentState,
+        state: SystemState,
         config: RunnableConfig | None = None,
-    ) -> AgentState:
+    ) -> SystemState:
         """Process state in the workflow"""
         try:
             # Extract query from state
