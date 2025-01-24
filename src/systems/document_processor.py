@@ -12,6 +12,7 @@ from src.utils.file_detection import detect_file_type
 from src.utils.timing import measure_time
 from src.utils.progress import ProgressManager, parallel_process
 import time
+from src.systems.types import Status
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +349,6 @@ class DocumentProcessor(Runnable, WorkflowNode):
             logger.error(f"Error processing documents: {str(e)}")
             return documents
 
-    @measure_time
     def invoke(
         self,
         state: SystemState,
@@ -357,13 +357,13 @@ class DocumentProcessor(Runnable, WorkflowNode):
         """
         Process documents and update state
         """
-        start_time = time.time()
+        self.start_processing()
         total_files = 0
         successful_files = 0
         
         try:
             if not state.input_path:
-                state.error = "No input path specified"
+                state.set_error("No input path specified")
                 return state
 
             path = Path(state.input_path)
@@ -383,27 +383,22 @@ class DocumentProcessor(Runnable, WorkflowNode):
                     total_files = len(glob.glob(os.path.join(str(path), "*.[xh][tl][ms]*")))
                 
             else:
-                state.error = f"Invalid input path: {state.input_path}"
+                state.set_error(f"Invalid input path: {state.input_path}")
                 return state
 
             if processed_docs:
                 state.processed_documents = processed_docs
-                
-                # Print final statistics
-                elapsed_time = time.time() - start_time
-                stats_msg = (
-                    f"\nDocument processing completed in {elapsed_time:.1f}s:\n"
-                    f"Files: {successful_files}/{total_files} processed successfully"
-                )
-                logger.info(stats_msg)
+                logger.info(f"Files: {successful_files}/{total_files} processed successfully")
+                state.status = Status.DOCS_PROCESSED
+                self._stop_timing()
                 return state
             
-            state.error = "No documents were processed"
+            state.set_error("No documents were processed")
             return state
                 
         except Exception as e:
             logger.error(f"Error in document processing: {str(e)}")
-            state.error = str(e)
+            state.set_error(str(e))
             state.processed_documents = None
             state.vectors_stored = False
             return state

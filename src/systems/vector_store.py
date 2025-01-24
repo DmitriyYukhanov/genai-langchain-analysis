@@ -11,6 +11,7 @@ from src.systems.types import SystemState, WorkflowNode
 from src.utils.timing import measure_time
 from src.utils.progress import ProgressManager, parallel_process
 import time
+from src.systems.types import Status
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class VectorStore(Runnable, WorkflowNode):
                 model="text-embedding-3-large",
                 openai_api_key=self.openai_api_key,
                 max_retries=2,  # Limit retries for faster failure
-                show_progress_bar=False  # Disable default progress bar
+                show_progress_bar=False  # Disable progress bar
             )
             self.collection_name = "insurance_docs"
 
@@ -51,7 +52,7 @@ class VectorStore(Runnable, WorkflowNode):
                 collection_name=self.collection_name,
                 connection=self.database_connection_string,
                 use_jsonb=True,  # Use JSONB for better metadata handling
-                pre_delete_collection=True,  # Ensure clean state
+                pre_delete_collection=False,
                 distance_strategy="cosine"  # Use cosine similarity for better matching
             )
             logger.debug(f"Initialized vector store: {self.collection_name}")
@@ -78,10 +79,9 @@ class VectorStore(Runnable, WorkflowNode):
                     doc.metadata[key] = list(value)
         return documents
 
-    @measure_time
     def add_documents(self, documents: List[Document]) -> None:
         """Add documents to vector store with metadata validation and progress tracking"""
-        logger.info(f"Adding {len(documents)} documents to vector store")
+        logger.debug(f"Adding {len(documents)} documents to vector store")
         try:
             # Prepare and validate metadata
             processed_docs = self._prepare_metadata(documents)
@@ -98,7 +98,12 @@ class VectorStore(Runnable, WorkflowNode):
                 
                 for i in range(0, len(processed_docs), batch_size):
                     batch = processed_docs[i:i + batch_size]
+                    if logger.getEffectiveLevel() <= logging.DEBUG:
+                        logger.debug(f"Adding batch of {len(batch)} documents to PGVector")
+                    
+                    # Add documents without verification
                     self.store.add_documents(batch)
+                    logger.info(f"Added batch of {len(batch)} documents")
                     
                     # Update progress
                     progress.update_task(
@@ -114,30 +119,30 @@ class VectorStore(Runnable, WorkflowNode):
                     description="Vector storage complete"
                 )
                 progress.remove_task(store_task)
-                
-            logger.debug(f"Successfully stored {len(processed_docs)} document vectors")
             
         except Exception as e:
             logger.error(f"Error storing document vectors: {str(e)}")
             raise
 
-    @measure_time
     def invoke(
         self,
         state: SystemState,
         config: RunnableConfig | None = None,
     ) -> SystemState:
         """Process state in the workflow"""
+        self.start_processing()
         try:
             if state.processed_documents:
                 self.add_documents(state.processed_documents)
                 state.vectors_stored = True
+                state.status = Status.VECTORS_SAVED
+                self._stop_timing()
                 return state
             
-            state.error = "No processed documents found"
+            state.set_error("No processed documents found")
             return state
         
         except Exception as e:
             logger.error(f"Error in vector store: {str(e)}")
-            state.error = str(e)
+            state.set_error(str(e))
             return state

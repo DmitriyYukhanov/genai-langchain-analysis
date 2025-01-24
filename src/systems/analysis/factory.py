@@ -1,9 +1,9 @@
 from typing import List, Type
 from langchain_core.language_models import BaseChatModel
-from .base import BaseAnalysisAgent
-from .trend_analysis import TrendAnalysisAgent
-from .comparison import ComparisonAgent
-from .summary import SummaryAgent
+from .agents.abstract.base import BaseAnalysisAgent
+from .agents.trend import TrendAnalysisAgent
+from .agents.comparison import ComparisonAnalysisAgent
+from .agents.summary import SummaryAgent
 import logging
 import json
 from openai import OpenAI
@@ -25,7 +25,7 @@ class AgentFactory:
         # Register available agent types
         self._agent_types: List[Type[BaseAnalysisAgent]] = [
             TrendAnalysisAgent,
-            ComparisonAgent,
+            ComparisonAnalysisAgent,
             SummaryAgent
         ]
         
@@ -37,7 +37,7 @@ class AgentFactory:
         self.agents: List[BaseAnalysisAgent] = []
         for agent_type in self._agent_types:
             # Use advanced LLM for high-priority agents, basic LLM for others
-            llm = self.advanced_llm if agent_type in [TrendAnalysisAgent, ComparisonAgent] else self.basic_llm
+            llm = self.advanced_llm if agent_type in [TrendAnalysisAgent, ComparisonAnalysisAgent] else self.basic_llm
             self.agents.append(agent_type(llm))
 
     def select_agents(self, query: str) -> List[BaseAnalysisAgent]:
@@ -98,7 +98,8 @@ Analyze the query and select up to {self.MAX_SELECTED_AGENTS} most relevant agen
             # Parse the JSON response
             result = json.loads(response.choices[0].message.content)
             selected_agent_ids = result["selected_agents"]
-            logger.info(f"Agent selection reasoning: {result['reasoning']}")
+            if logger.getEffectiveLevel() <= logging.DEBUG:
+                logger.debug(f"Agent selection reasoning: {result['reasoning']}")
             
             # Map selected IDs to actual agents
             selected_agents = []
