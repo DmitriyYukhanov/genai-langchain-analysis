@@ -16,7 +16,7 @@ from src.systems.types import SystemState
 from src.utils.timing import measure_time
 import json
 from openai import OpenAI
-from src.agents.factory import AgentFactory
+from src.systems.analysis_agents.factory import AgentFactory
 
 from .vector_store import VectorStore
 
