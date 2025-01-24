@@ -25,7 +25,7 @@ In this session, you'll build an AI-powered data analysis pipeline that processe
 1. Python packages:
 
 ```
-pip install langchain langchain-core langchain-community langchain-anthropic langchain-postgres python-dotenv psycopg[binary] openai langchain-openai anthropic
+pip install langchain langchain-core langchain-community langchain-anthropic langchain-postgres python-dotenv psycopg[binary] openai langchain-openai anthropic langchain_postgres psycopg2 networkx transformers
 ```
 
 2. API Keys & Services:
@@ -120,7 +120,7 @@ from langchain.vectorstores import PGVector
 
 class VectorStore:
     def __init__(self):
-        self.connection_string = os.getenv("NEON_CONNECTION_STRING")
+        self.connection_string = os.getenv("PGVECTOR_CONNECTION_STRING")
 
     def init_store(self):
         """

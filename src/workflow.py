@@ -62,9 +62,15 @@ def supervisor_node(state: AgentState) -> Command[NodeName]:
             logger.info("Starting vector storage")
             return Command(goto=VectorStore.NODE_NAME)
             
-        if state.vectors_stored and any(isinstance(msg, HumanMessage) and msg.content for msg in state.messages):
-            logger.info("Starting analysis")
-            return Command(goto=AnalysisAgent.NODE_NAME)
+        # Check if analysis is needed
+        if state.vectors_stored and state.messages:
+            # Get last two messages
+            last_messages = state.messages[-2:] if len(state.messages) >= 2 else state.messages
+            
+            # If last message is human and not followed by AI response, run analysis
+            if any(isinstance(msg, HumanMessage) for msg in last_messages) and not any(isinstance(msg, AIMessage) for msg in last_messages):
+                logger.info("Starting analysis")
+                return Command(goto=AnalysisAgent.NODE_NAME)
             
         # If we reach here, we're done
         logger.info("Workflow complete")
@@ -152,6 +158,8 @@ def main():
 
         # Run the graph with progress tracking
         logger.info("Starting analysis...")
+        previous_messages = set()
+        
         for output in graph.stream(initial_state):
             if "__end__" not in output:
                 if "error" in output and output["error"]:
@@ -161,15 +169,19 @@ def main():
                 if output.get("processed_documents"):
                     docs = output["processed_documents"]
                     logger.info(f"Successfully processed {len(docs)} document chunks")
-                    if docs:
-                        logger.info("\nSample from first document:")
-                        logger.info(f"Content: {docs[0].page_content[:200]}...")
-                        logger.info(f"Metadata: {docs[0].metadata}")
                 
+                # Print new AI messages
                 if output.get("messages"):
-                    for msg in output["messages"]:
-                        if isinstance(msg, AIMessage):
-                            logger.info(f"\nAnalysis Result:\n{msg.content}\n")
+                    current_messages = set(msg.content for msg in output["messages"] if isinstance(msg, AIMessage))
+                    new_messages = current_messages - previous_messages
+                    
+                    for content in new_messages:
+                        logger.info("\nAnalysis Result:")
+                        logger.info("=" * 80)
+                        logger.info(content)
+                        logger.info("=" * 80 + "\n")
+                    
+                    previous_messages = current_messages
 
         # Calculate and log total time
         total_time = time.time() - start_time
