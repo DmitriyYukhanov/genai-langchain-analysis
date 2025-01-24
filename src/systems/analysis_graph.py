@@ -16,6 +16,7 @@ from src.systems.types import SystemState
 from src.utils.timing import measure_time
 import json
 from openai import OpenAI
+from src.agents.factory import AgentFactory
 
 from .vector_store import VectorStore
 
@@ -225,8 +226,6 @@ class AnalysisAgent(Runnable):
         self.vector_store = vector_store
         
         # Initialize LLMs
-        self.agents_selection_llm = OpenAI()
-
         self.advanced_llm = ChatAnthropic(
             model="claude-3-5-sonnet-20241022",
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
@@ -240,6 +239,16 @@ class AnalysisAgent(Runnable):
         )
 
         # Initialize retrieval chain
+        self.retrieval_chain = self._create_retrieval_chain()
+        
+        # Initialize agent factory
+        self.agent_factory = AgentFactory(self.advanced_llm, self.basic_llm)
+
+    def _create_retrieval_chain(self):
+        """Create the base retrieval chain"""
+        from langchain.chains.qa_with_sources.retrieval import RetrievalQAWithSourcesChain
+        from langchain.prompts import PromptTemplate
+        
         prompt_template = """Use the following pieces of context to answer the question at the end.
         If you don't know the answer, just say that you don't know, don't try to make up an answer.
         
@@ -248,7 +257,7 @@ class AnalysisAgent(Runnable):
         Question: {question}
         Answer: """
 
-        self.retrieval_chain = RetrievalQAWithSourcesChain.from_chain_type(
+        return RetrievalQAWithSourcesChain.from_chain_type(
             llm=self.advanced_llm,
             chain_type="stuff",
             retriever=self.vector_store.store.as_retriever(
@@ -268,91 +277,6 @@ class AnalysisAgent(Runnable):
             verbose=True
         )
 
-        # Register available agents
-        self.agents: List[BaseAnalysisAgent] = [
-            TrendAnalysisAgent(self.advanced_llm),
-            ComparisonAgent(self.advanced_llm),
-            SummaryAgent(self.basic_llm)
-        ]
-
-    def _select_agents_with_llm(self, query: str) -> List[BaseAnalysisAgent]:
-        """Use LLM to select appropriate agents based on query content"""
-        # Prepare agent descriptions for LLM
-        agent_descriptions = "\n".join([
-            f"- {agent.agent_id}: {agent.capability.description}"
-            for agent in self.agents
-        ])
-
-        try:
-            # Get LLM's agent selection with structured output
-            response = self.agents_selection_llm.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are a helpful assistant that selects appropriate analysis agents. You must respond with a JSON object containing 'selected_agents' (array of agent IDs) and 'reasoning' (string)."
-                    },
-                    {
-                        "role": "user", 
-                        "content": f"""Given a user's query about insurance data analysis, determine which analysis agents would be most appropriate.
-
-Available agents:
-{agent_descriptions}
-
-User query: "{query}"
-
-Analyze the query and select up to {MAX_SELECTED_AGENTS} most relevant agents. Consider:
-1. The type of analysis requested
-2. The specific information needs
-3. The complexity of the query"""
-                    }
-                ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "agent_selection_response",
-                        "description": "Select appropriate agents for analyzing data based on the query",
-                        "strict": True,
-                        "schema": {
-                            "type": "object",
-                            "description": "Response from the agent selection LLM",
-                            "properties": {
-                                "selected_agents": {"type": "array", "items": {"type": "string"}},
-                                "reasoning": {
-                                    "type": "string", 
-                                    "description": "Brief explanation of why these agents were selected"
-                                    },
-                            },
-                            "required": ["selected_agents", "reasoning"],
-                            "additionalProperties": False
-                        }
-                    }
-                }
-            )
-
-            # Parse the JSON response
-            result = json.loads(response.choices[0].message.content)
-            selected_agent_ids = result["selected_agents"]
-            logger.info(f"Agent selection reasoning: {result['reasoning']}")
-            
-            # Map selected IDs to actual agents
-            selected_agents = []
-            for agent_id in selected_agent_ids:
-                matching_agents = [agent for agent in self.agents if agent.agent_id == agent_id]
-                if matching_agents:
-                    selected_agents.append(matching_agents[0])
-
-            # Fallback to SummaryAgent if no agents were selected
-            if not selected_agents:
-                selected_agents = [next(agent for agent in self.agents if isinstance(agent, SummaryAgent))]
-
-            return selected_agents
-            
-        except Exception as e:
-            logger.error(f"Error in agent selection: {e}")
-            # Fallback to SummaryAgent on error
-            return [next(agent for agent in self.agents if isinstance(agent, SummaryAgent))]
-
     @measure_time
     def invoke(
         self,
@@ -365,8 +289,8 @@ Analyze the query and select up to {MAX_SELECTED_AGENTS} most relevant agents. C
             query = next(msg.content for msg in reversed(state.messages) if isinstance(msg, HumanMessage))
             logger.info(f"Processing query: {query}")
 
-            # Select appropriate agents using LLM
-            selected_agents = self._select_agents_with_llm(query)
+            # Select appropriate agents using factory
+            selected_agents = self.agent_factory.select_agents(query)
             logger.info(f"Selected agents: {[agent.__class__.__name__ for agent in selected_agents]}")
             
             # Run analysis with each selected agent
