@@ -47,6 +47,10 @@ class BaseAnalysisAgent(ABC):
         """Define agent's capabilities"""
         pass
 
+    def __init__(self, llm: BaseChatModel):
+        """Initialize the agent with an LLM"""
+        self.llm = llm
+
     @abstractmethod
     def analyze(self, query: str, retrieval_chain: RetrievalQAWithSourcesChain) -> str:
         """Run analysis on the query"""
@@ -54,20 +58,27 @@ class BaseAnalysisAgent(ABC):
 
     def _enhance_retrieval_chain(self, retrieval_chain: RetrievalQAWithSourcesChain, prompt: str) -> RetrievalQAWithSourcesChain:
         """Enhance retrieval chain with agent-specific prompt"""
-        chain_prompt = PromptTemplate(
-            template=f"{prompt}\n\nQuestion: {{question}}\n\nAnswer: Let me analyze this based on the available data.",
-            input_variables=["question"]
+        # Create a new chain with the updated prompt
+        enhanced_chain = RetrievalQAWithSourcesChain.from_chain_type(
+            llm=self.llm,  # Use the LLM passed to the constructor
+            chain_type="stuff",
+            retriever=retrieval_chain.retriever,
+            chain_type_kwargs={
+                "prompt": PromptTemplate(
+                    template=prompt,
+                    input_variables=["context", "question"]
+                ),
+                "document_variable_name": "context",
+            },
+            return_source_documents=True,
+            verbose=True
         )
-        retrieval_chain.combine_documents_chain.llm_chain.prompt = chain_prompt
-        return retrieval_chain
+        return enhanced_chain
 
 class TrendAnalysisAgent(BaseAnalysisAgent):
     @property
     def agent_id(self) -> str:
         return "trend"
-
-    def __init__(self, llm: BaseChatModel):
-        self.llm = llm
 
     @property
     def capability(self) -> AgentCapability:
@@ -87,20 +98,35 @@ class TrendAnalysisAgent(BaseAnalysisAgent):
         3. Significant turning points
         4. Rate of change analysis
         
+        Below you will find insurance cost data. Analyze this data to answer the question.
         Provide specific numbers and percentages to support your analysis.
-        Always cite the years you're referring to."""
+        Always cite the years you're referring to.
         
+        {context}
+        
+        Question: {question}
+        
+        Answer: Let me analyze this based on the data provided."""
+        
+        # Create enhanced chain with the prompt
         enhanced_chain = self._enhance_retrieval_chain(retrieval_chain, prompt)
-        result = enhanced_chain.invoke({"question": query})
-        return f"Trend Analysis:\n\n{result['answer']}\n\nSources: {result['sources']}"
+        
+        # Run analysis with document retrieval
+        logger.info(f"Running trend analysis for query: {query}")
+        try:
+            result = enhanced_chain.invoke({
+                "question": query
+            })
+            logger.info(f"Trend analysis result: {result}")
+            return f"Trend Analysis:\n\n{result['answer']}\n\nSources: {result['sources']}"
+        except Exception as e:
+            logger.error(f"Error in trend analysis: {str(e)}")
+            raise
 
 class ComparisonAgent(BaseAnalysisAgent):
     @property
     def agent_id(self) -> str:
         return "comparison"
-
-    def __init__(self, llm: BaseChatModel):
-        self.llm = llm
 
     @property
     def capability(self) -> AgentCapability:
@@ -119,19 +145,34 @@ class ComparisonAgent(BaseAnalysisAgent):
         2. Percentage differences
         3. Relative changes
         
-        Always show your calculations and cite the specific years being compared."""
+        Below you will find insurance cost data. Compare this data to answer the question.
+        Always show your calculations and cite the specific years being compared.
         
+        {context}
+        
+        Question: {question}
+        
+        Answer: Let me analyze this based on the data provided."""
+        
+        # Create enhanced chain with the prompt
         enhanced_chain = self._enhance_retrieval_chain(retrieval_chain, prompt)
-        result = enhanced_chain.invoke({"question": query})
-        return f"Comparison Analysis:\n\n{result['answer']}\n\nSources: {result['sources']}"
+        
+        # Run analysis with document retrieval
+        logger.info(f"Running comparison analysis for query: {query}")
+        try:
+            result = enhanced_chain.invoke({
+                "question": query
+            })
+            logger.info(f"Comparison analysis result: {result}")
+            return f"Comparison Analysis:\n\n{result['answer']}\n\nSources: {result['sources']}"
+        except Exception as e:
+            logger.error(f"Error in comparison analysis: {str(e)}")
+            raise
 
 class SummaryAgent(BaseAnalysisAgent):
     @property
     def agent_id(self) -> str:
         return "summary"
-
-    def __init__(self, llm: BaseChatModel):
-        self.llm = llm
 
     @property
     def capability(self) -> AgentCapability:
@@ -151,21 +192,29 @@ class SummaryAgent(BaseAnalysisAgent):
         3. Important highlights
         4. Notable outliers
         
-        Keep the summary focused and data-driven."""
+        Below you will find insurance cost data. Summarize this data to answer the question.
+        Keep the summary focused and data-driven.
         
+        {context}
+        
+        Question: {question}
+        
+        Answer: Let me analyze this based on the data provided."""
+        
+        # Create enhanced chain with the prompt
         enhanced_chain = self._enhance_retrieval_chain(retrieval_chain, prompt)
         
-        # Debug logging for document retrieval
-        logger.info(f"Retrieving documents for query: {query}")
-        docs = enhanced_chain.retriever.get_relevant_documents(query)
-        logger.info(f"Retrieved {len(docs)} documents")
-        for i, doc in enumerate(docs):
-            logger.info(f"Document {i + 1} content: {doc.page_content[:200]}...")
-        
-        result = enhanced_chain.invoke({"question": query})
-        logger.info(f"Raw chain result: {result}")
-        
-        return f"Summary:\n\n{result['answer']}\n\nSources: {result['sources']}"
+        # Run analysis with document retrieval
+        logger.info(f"Running summary analysis for query: {query}")
+        try:
+            result = enhanced_chain.invoke({
+                "question": query
+            })
+            logger.info(f"Summary analysis result: {result}")
+            return f"Summary:\n\n{result['answer']}\n\nSources: {result['sources']}"
+        except Exception as e:
+            logger.error(f"Error in summary analysis: {str(e)}")
+            raise
 
 class AnalysisAgent(Runnable):
     """Main analysis agent that coordinates other specialized agents"""
@@ -176,11 +225,7 @@ class AnalysisAgent(Runnable):
         self.vector_store = vector_store
         
         # Initialize LLMs
-        self.agents_selection_llm = ChatOpenAI(
-            model_name="gpt-4o",
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            temperature=0.0
-        )
+        self.agents_selection_llm = OpenAI()
 
         self.advanced_llm = ChatAnthropic(
             model="claude-3-5-sonnet-20241022",
@@ -194,25 +239,34 @@ class AnalysisAgent(Runnable):
             temperature=0.0
         )
 
-        # Initialize retrieval chain with more lenient settings
+        # Initialize retrieval chain
+        prompt_template = """Use the following pieces of context to answer the question at the end.
+        If you don't know the answer, just say that you don't know, don't try to make up an answer.
+        
+        {context}
+        
+        Question: {question}
+        Answer: """
+
         self.retrieval_chain = RetrievalQAWithSourcesChain.from_chain_type(
             llm=self.advanced_llm,
             chain_type="stuff",
             retriever=self.vector_store.store.as_retriever(
-                search_type="similarity_score_threshold",
+                search_type="similarity",
                 search_kwargs={
-                    "k": 10,  # Retrieve more documents
-                    "score_threshold": 0.3,  # Lower threshold for matches
-                    "fetch_k": 20  # Fetch more candidates before filtering
+                    "k": 6,
                 }
             ),
+            chain_type_kwargs={
+                "prompt": PromptTemplate(
+                    template=prompt_template,
+                    input_variables=["context", "question"]
+                ),
+                "document_variable_name": "context",
+            },
             return_source_documents=True,
-            reduce_k_below_max_tokens=True,
             verbose=True
         )
-
-        # Add debug logging for retrieval
-        self.retrieval_chain.combine_documents_chain.llm_chain.verbose = True
 
         # Register available agents
         self.agents: List[BaseAnalysisAgent] = [
@@ -231,10 +285,16 @@ class AnalysisAgent(Runnable):
 
         try:
             # Get LLM's agent selection with structured output
-            response = self.agents_selection_llm.invoke(
-                [
-                    SystemMessage(content="You are a helpful assistant that selects appropriate analysis agents. You must respond with a JSON object containing 'selected_agents' (array of agent IDs) and 'reasoning' (string)."),
-                    HumanMessage(content=f"""Given a user's query about insurance data analysis, determine which analysis agents would be most appropriate.
+            response = self.agents_selection_llm.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are a helpful assistant that selects appropriate analysis agents. You must respond with a JSON object containing 'selected_agents' (array of agent IDs) and 'reasoning' (string)."
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"""Given a user's query about insurance data analysis, determine which analysis agents would be most appropriate.
 
 Available agents:
 {agent_descriptions}
@@ -244,12 +304,34 @@ User query: "{query}"
 Analyze the query and select up to {MAX_SELECTED_AGENTS} most relevant agents. Consider:
 1. The type of analysis requested
 2. The specific information needs
-3. The complexity of the query""")
-                ]
+3. The complexity of the query"""
+                    }
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "agent_selection_response",
+                        "description": "Select appropriate agents for analyzing data based on the query",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "description": "Response from the agent selection LLM",
+                            "properties": {
+                                "selected_agents": {"type": "array", "items": {"type": "string"}},
+                                "reasoning": {
+                                    "type": "string", 
+                                    "description": "Brief explanation of why these agents were selected"
+                                    },
+                            },
+                            "required": ["selected_agents", "reasoning"],
+                            "additionalProperties": False
+                        }
+                    }
+                }
             )
 
             # Parse the JSON response
-            result = json.loads(response.content)
+            result = json.loads(response.choices[0].message.content)
             selected_agent_ids = result["selected_agents"]
             logger.info(f"Agent selection reasoning: {result['reasoning']}")
             
