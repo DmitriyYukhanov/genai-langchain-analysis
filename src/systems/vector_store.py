@@ -7,15 +7,23 @@ from langchain.embeddings import CacheBackedEmbeddings
 import logging
 from langchain_core.runnables import Runnable, RunnableConfig
 from sqlalchemy import create_engine
-from src.systems.types import SystemState
+from src.systems.types import SystemState, WorkflowNode
 from src.utils.timing import measure_time
+from src.utils.progress import ProgressManager, parallel_process
 import time
 
 logger = logging.getLogger(__name__)
 
-class VectorStore(Runnable):
-    NODE_NAME = "vector_store"
-    SEARCH_TIMEOUT = 2.0  # Maximum search time in seconds
+class VectorStore(Runnable, WorkflowNode):
+    """Stores and retrieves document vectors using PGVector"""
+    
+    @property
+    def NODE_NAME(self) -> str:
+        return "vector_store"
+        
+    @property
+    def STEP_DESCRIPTION(self) -> str:
+        return "Vector Storage"
 
     def __init__(self):
         """Initialize the vector store with OpenAI embeddings and PGVector"""
@@ -32,7 +40,8 @@ class VectorStore(Runnable):
             self.embeddings = OpenAIEmbeddings(
                 model="text-embedding-3-large",
                 openai_api_key=self.openai_api_key,
-                max_retries=2  # Limit retries for faster failure
+                max_retries=2,  # Limit retries for faster failure
+                show_progress_bar=False  # Disable default progress bar
             )
             self.collection_name = "insurance_docs"
 
@@ -45,7 +54,7 @@ class VectorStore(Runnable):
                 pre_delete_collection=True,  # Ensure clean state
                 distance_strategy="cosine"  # Use cosine similarity for better matching
             )
-            logger.info(f"Successfully initialized vector store: {self.collection_name}")
+            logger.debug(f"Initialized vector store: {self.collection_name}")
         except Exception as e:
             logger.error(f"Error initializing vector store: {str(e)}")
             raise
@@ -71,49 +80,46 @@ class VectorStore(Runnable):
 
     @measure_time
     def add_documents(self, documents: List[Document]) -> None:
-        """Add documents to vector store with metadata validation"""
+        """Add documents to vector store with metadata validation and progress tracking"""
         logger.info(f"Adding {len(documents)} documents to vector store")
         try:
             # Prepare and validate metadata
             processed_docs = self._prepare_metadata(documents)
             
-            # Batch documents for efficient processing
+            # Process in batches for memory efficiency
             batch_size = 100
-            for i in range(0, len(processed_docs), batch_size):
-                batch = processed_docs[i:i + batch_size]
-                self.store.add_documents(batch)
-                logger.info(f"Added batch of {len(batch)} documents")
+            total_batches = (len(processed_docs) + batch_size - 1) // batch_size
             
-            logger.info("Successfully added all documents to vector store")
+            with ProgressManager() as progress:
+                store_task = progress.add_task(
+                    description=f"Storing {len(processed_docs)} document vectors",
+                    total_steps=len(processed_docs)
+                )
+                
+                for i in range(0, len(processed_docs), batch_size):
+                    batch = processed_docs[i:i + batch_size]
+                    self.store.add_documents(batch)
+                    
+                    # Update progress
+                    progress.update_task(
+                        store_task,
+                        completed=float(min(i + batch_size, len(processed_docs))),
+                        description=f"Storing document vectors - batch {(i//batch_size)+1}/{total_batches}"
+                    )
+                
+                # Ensure 100% completion
+                progress.update_task(
+                    store_task,
+                    completed=float(len(processed_docs)),
+                    description="Vector storage complete"
+                )
+                progress.remove_task(store_task)
+                
+            logger.debug(f"Successfully stored {len(processed_docs)} document vectors")
+            
         except Exception as e:
-            logger.error(f"Error adding documents to vector store: {str(e)}")
+            logger.error(f"Error storing document vectors: {str(e)}")
             raise
-
-    @measure_time
-    def similarity_search(self, query: str, k: int = 4) -> List[Document]:
-        """Perform similarity search with timeout"""
-        logger.info(f"Performing similarity search for: {query}")
-        try:
-            start_time = time.time()
-            
-            # Perform search with timeout check
-            results = self.store.similarity_search(
-                query,
-                k=k,
-                filter=None
-            )
-            
-            # Check if search time exceeds limit
-            search_time = time.time() - start_time
-            if search_time > self.SEARCH_TIMEOUT:
-                logger.warning(f"Search exceeded time limit: {search_time:.2f}s > {self.SEARCH_TIMEOUT}s")
-            
-            logger.info(f"Found {len(results)} similar documents in {search_time:.2f}s")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error performing similarity search: {str(e)}")
-            return []
 
     @measure_time
     def invoke(

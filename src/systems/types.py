@@ -4,6 +4,22 @@ from langchain_core.documents import Document
 from typing import Annotated
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
+from abc import ABC, abstractmethod
+
+class WorkflowNode(ABC):
+    """Base class for all workflow nodes"""
+    
+    @property
+    @abstractmethod
+    def NODE_NAME(self) -> str:
+        """Unique identifier for the node"""
+        pass
+        
+    @property
+    @abstractmethod
+    def STEP_DESCRIPTION(self) -> str:
+        """Human-readable description of what this node does"""
+        pass
 
 class SystemState(BaseModel):
     messages: Annotated[list[AnyMessage], add_messages]

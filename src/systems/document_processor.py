@@ -7,9 +7,11 @@ from langchain_core.runnables import Runnable, RunnableConfig
 import logging
 import glob
 import os
-from src.systems.types import SystemState
+from src.systems.types import SystemState, WorkflowNode
 from src.utils.file_detection import detect_file_type
 from src.utils.timing import measure_time
+from src.utils.progress import ProgressManager, parallel_process
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +121,16 @@ class MetadataExtractor:
             metadata["average_expenditure"] = sum(metadata["expenditures"].values()) / len(metadata["expenditures"])
             metadata["total_percent_change"] = sum(metadata["percent_changes"].values())
 
-class DocumentProcessor(Runnable):
-    NODE_NAME:str = "doc_processor"
+class DocumentProcessor(Runnable, WorkflowNode):
+    """Processes documents by loading, splitting and extracting metadata"""
+    
+    @property
+    def NODE_NAME(self) -> str:
+        return "doc_processor"
+        
+    @property
+    def STEP_DESCRIPTION(self) -> str:
+        return "Document Processing"
 
     def __init__(self):
         """Initialize the document processor with text splitter configuration"""
@@ -143,11 +153,9 @@ class DocumentProcessor(Runnable):
         Returns:
             List of Document objects
         """
-        logger.info(f"Loading file: {file_path}")
         try:
             file_type = detect_file_type(file_path)
-
-            logger.info(f"File type detected: {file_type}")
+            logger.debug(f"Loading {file_type} file: {os.path.basename(file_path)}")
             
             if file_type == 'html':
                 loader = BSHTMLLoader(file_path)
@@ -160,6 +168,10 @@ class DocumentProcessor(Runnable):
                 
             documents = loader.load()
             
+            if not documents:
+                logger.warning(f"No content found in file: {os.path.basename(file_path)}")
+                return []
+                
             # Add source and basic metadata
             for doc in documents:
                 doc.metadata.update({
@@ -168,62 +180,44 @@ class DocumentProcessor(Runnable):
                     "file_type": file_type
                 })
                 
-            logger.info(f"Successfully loaded {len(documents)} elements from {file_path}")
+            logger.debug(f"Loaded {len(documents)} elements from {os.path.basename(file_path)}")
             return documents
             
         except Exception as e:
-            logger.error(f"Error loading file {file_path}: {str(e)}")
+            logger.error(f"Error loading file {os.path.basename(file_path)}: {str(e)}")
             return []
 
     def extract_metadata(self, content: str) -> Dict[str, Any]:
         return self.metadata_extractor.extract(content)
 
-    def process_documents(self, documents: List[Document]) -> List[Document]:
-        """
-        Process documents by splitting and extracting metadata
-        
-        Args:
-            documents: List of raw documents
-            
-        Returns:
-            List of processed Document objects
-        """
-        logger.info(f"Processing {len(documents)} documents")
+    def process_document(self, doc: Document) -> Document:
+        """Process a single document by extracting metadata"""
         try:
-            # Split documents into chunks
-            split_docs = self.text_splitter.split_documents(documents)
-            
             # Extract and enhance metadata
-            for i, doc in enumerate(split_docs):
-                # Add chunk information
-                doc.metadata["chunk_id"] = i
-                
-                # Extract additional metadata
-                metadata = self.extract_metadata(doc.page_content)
-                doc.metadata.update(metadata)
-                
-                # Add structured data for embeddings
-                structured_data = []
-                for year in metadata.get("years", []):
-                    year_data = {
-                        "year": year,
-                        "expenditure": metadata["expenditures"].get(year),
-                        "percent_change": metadata["percent_changes"].get(year)
-                    }
-                    structured_data.append(year_data)
-                
-                doc.metadata["structured_data"] = structured_data
-                
-            logger.info(f"Successfully processed documents into {len(split_docs)} chunks")
-            return split_docs
+            metadata = self.extract_metadata(doc.page_content)
+            doc.metadata.update(metadata)
+            
+            # Add structured data for embeddings
+            structured_data = []
+            for year in metadata.get("years", []):
+                year_data = {
+                    "year": year,
+                    "expenditure": metadata["expenditures"].get(year),
+                    "percent_change": metadata["percent_changes"].get(year)
+                }
+                structured_data.append(year_data)
+            
+            doc.metadata["structured_data"] = structured_data
+            return doc
             
         except Exception as e:
-            logger.error(f"Error processing documents: {str(e)}")
-            return documents
+            logger.error(f"Error processing document: {str(e)}")
+            return doc
 
     def process_directory(self, directory_path: str) -> List[Document]:
         """
-        Process all Excel/HTML files in a directory
+        Process all Excel/HTML files in a directory using batch processing
+        to minimize memory usage.
         
         Args:
             directory_path: Path to directory containing files
@@ -231,26 +225,128 @@ class DocumentProcessor(Runnable):
         Returns:
             List of processed Document objects
         """
-        logger.info(f"Processing directory: {directory_path}")
-        all_documents = []
-        
         # Find all Excel and HTML files
         patterns = ['*.xls*', '*.html', '*.htm']
         files = []
         for pattern in patterns:
-            files.extend(glob.glob(os.path.join(directory_path, pattern)))
+            found_files = glob.glob(os.path.join(directory_path, pattern))
+            logger.debug(f"Found {len(found_files)} files matching pattern {pattern}")
+            files.extend(found_files)
         
-        for file_path in files:
-            try:
-                documents = self.load_excel(file_path)
-                if documents:
-                    processed_docs = self.process_documents(documents)
-                    all_documents.extend(processed_docs)
-            except Exception as e:
-                logger.error(f"Error processing {file_path}: {str(e)}")
-                continue
+        if not files:
+            logger.error(f"No Excel or HTML files found in {directory_path}")
+            return []
+            
+        logger.info(f"Processing {len(files)} files")
+        
+        # Process files in batches to control memory usage
+        batch_size = 5  # Process 5 files at a time
+        all_processed_docs = []
+        successful_files = 0
+        
+        with ProgressManager() as progress:
+            main_task = progress.add_task(
+                description=f"Processing {len(files)} files",
+                total_steps=len(files)
+            )
+            
+            for i in range(0, len(files), batch_size):
+                batch_files = files[i:i + batch_size]
+                batch_successful = 0
                 
-        return all_documents
+                # Process batch in parallel
+                batch_docs = parallel_process(
+                    batch_files,
+                    self.load_excel,
+                    description=None,  # No progress bar for individual batches
+                    max_workers=min(batch_size, os.cpu_count())
+                )
+                
+                # Combine and process documents from this batch
+                batch_combined = []
+                for docs in batch_docs:
+                    if docs:
+                        batch_combined.extend(docs)
+                        batch_successful += 1
+                
+                if batch_combined:
+                    # Process the combined documents from this batch
+                    processed_batch = self.process_documents(batch_combined)
+                    all_processed_docs.extend(processed_batch)
+                
+                # Update progress and counts
+                successful_files += batch_successful
+                current_progress = min((i + len(batch_files)), len(files))
+                progress.update_task(
+                    main_task,
+                    completed=float(current_progress),
+                    description=f"Processing files - {successful_files}/{len(files)} successful"
+                )
+            
+            # Ensure progress bar shows completion before removal
+            progress.update_task(
+                main_task,
+                completed=float(len(files)),
+                description=f"Completed - {successful_files}/{len(files)} files processed"
+            )
+            # Small delay to ensure completion is visible
+            time.sleep(0.1)
+            progress.remove_task(main_task)
+        
+        if not all_processed_docs:
+            logger.error("No documents were successfully processed")
+            return []
+            
+        logger.info(f"Successfully processed {len(all_processed_docs)} chunks from {successful_files} files")
+        return all_processed_docs
+
+    def process_documents(self, documents: List[Document]) -> List[Document]:
+        """
+        Process documents by splitting and extracting metadata.
+        Uses batch processing for large document sets.
+        
+        Args:
+            documents: List of raw documents
+            
+        Returns:
+            List of processed Document objects
+        """
+        try:
+            # Split documents into chunks
+            split_docs = self.text_splitter.split_documents(documents)
+            
+            # Process chunks in batches to control memory usage
+            chunk_batch_size = 100  # Process 100 chunks at a time
+            processed_docs = []
+            
+            # Process chunks without progress bar since it's too fast
+            for i in range(0, len(split_docs), chunk_batch_size):
+                batch = split_docs[i:i + chunk_batch_size]
+                
+                # Process batch in parallel
+                processed_batch = parallel_process(
+                    batch,
+                    self.process_document,
+                    description=None,  # No progress bar needed
+                    max_workers=min(32, os.cpu_count() * 2)
+                )
+                
+                # Add chunk IDs relative to the full set
+                for j, doc in enumerate(processed_batch):
+                    doc.metadata["chunk_id"] = i + j
+                
+                processed_docs.extend(processed_batch)
+                
+                # Force garbage collection after each batch if needed
+                if len(processed_docs) > 1000:
+                    import gc
+                    gc.collect()
+            
+            return processed_docs
+            
+        except Exception as e:
+            logger.error(f"Error processing documents: {str(e)}")
+            return documents
 
     @measure_time
     def invoke(
@@ -261,6 +357,10 @@ class DocumentProcessor(Runnable):
         """
         Process documents and update state
         """
+        start_time = time.time()
+        total_files = 0
+        successful_files = 0
+        
         try:
             if not state.input_path:
                 state.error = "No input path specified"
@@ -269,16 +369,33 @@ class DocumentProcessor(Runnable):
             path = Path(state.input_path)
             
             if path.is_file():
+                total_files = 1
                 documents = self.load_excel(str(path))
-                processed_docs = self.process_documents(documents)
+                if documents:
+                    successful_files = 1
+                processed_docs = self.process_documents(documents) if documents else []
+                
             elif path.is_dir():
                 processed_docs = self.process_directory(str(path))
+                # File counts are tracked inside process_directory
+                if processed_docs:
+                    successful_files = len(set(doc.metadata["source"] for doc in processed_docs))
+                    total_files = len(glob.glob(os.path.join(str(path), "*.[xh][tl][ms]*")))
+                
             else:
                 state.error = f"Invalid input path: {state.input_path}"
                 return state
 
             if processed_docs:
                 state.processed_documents = processed_docs
+                
+                # Print final statistics
+                elapsed_time = time.time() - start_time
+                stats_msg = (
+                    f"\nDocument processing completed in {elapsed_time:.1f}s:\n"
+                    f"Files: {successful_files}/{total_files} processed successfully"
+                )
+                logger.info(stats_msg)
                 return state
             
             state.error = "No documents were processed"
