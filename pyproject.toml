@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "agent-rag"
 version = "0.1.0"
-description = ""
+description = "Multi-agent system for analyzing insurance data"
 authors = ["Elon Salfati <elon@salfati.group>"]
 readme = "README.md"
 packages = [
@@ -10,23 +10,23 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-langchain = "^0.3.14"
-langgraph = "^0.2.61"
-langchain-core = "^0.3.29"
-langchain-community = "^0.3.14"
+langchain = "^0.1.7"
+langchain-core = "^0.1.8"
+langchain-community = "^0.0.10"
 langchain-anthropic = "^0.3.1"
 langchain-postgres = "^0.0.12"
-python-dotenv = "^1.0.1"
-psycopg = "^3.1.18"
-psycopg-binary = "^3.1.18"
-openai = "^1.59.5"
 langchain-openai = "^0.2.14"
-anthropic = "^0.42.0"
-pandas = "^2.2.3"
-openpyxl = "^3.1.5"
-typer = "^0.15.1"
+langgraph = "^0.0.10"
+anthropic = "^0.7.0"
+openai = "^1.59.5"
+python-dotenv = "^1.0.0"
+psycopg = {extras = ["binary"], version = "^3.1.12"}
+unstructured = "^0.10.30"
+pandas = "^2.1.4"
+openpyxl = "^3.1.2"
 rich = "^13.9.4"
-
+networkx = "*"
+sqlalchemy = "^2.0.0"
 
 [build-system]
 requires = ["poetry-core"]
