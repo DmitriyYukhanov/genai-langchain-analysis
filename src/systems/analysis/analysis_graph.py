@@ -11,14 +11,11 @@ from langchain.prompts import PromptTemplate
 import logging
 import os
 from src.systems.types import SystemState, WorkflowNode
-from src.systems.analysis.factory import AgentFactory
 from src.systems.vector_store import VectorStore
 from src.systems.types import Status
+from src.systems.analysis.multi_agent_supervisor import MultiAgentSupervisor
 
 logger = logging.getLogger(__name__)
-
-# Configuration constants
-MAX_SELECTED_AGENTS = 2
 
 @dataclass
 class AgentCapability:
@@ -92,55 +89,8 @@ class AnalysisAgent(Runnable, WorkflowNode):
         logging.getLogger("anthropic").setLevel(logging.ERROR)
         logging.getLogger("httpcore").setLevel(logging.ERROR)
         
-        # Initialize LLMs with logging control
-        self.advanced_llm = ChatAnthropic(
-            model="claude-3-5-sonnet-20241022",
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-            temperature=0.0,
-            verbose=False  # Always keep quiet
-        )
-
-        self.basic_llm = ChatOpenAI(
-            model_name="gpt-4o-mini",
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            temperature=0.0,
-            verbose=False,  # Always keep quiet
-            request_timeout=30  # Only OpenAI needs timeout
-        )
-
-        # Initialize agent factory
-        self.agent_factory = AgentFactory(self.advanced_llm, self.basic_llm)
-
-    def _run_analysis(self, query: str) -> List[str]:
-        """Run analysis using selected agents"""
-        try:
-            # Select appropriate agents using factory
-            if logger.getEffectiveLevel() <= logging.DEBUG:
-                logger.debug("Selecting appropriate agents for analysis...")
-            selected_agents = self.agent_factory.select_agents(query)
-            
-            if logger.getEffectiveLevel() <= logging.DEBUG:
-                logger.debug(f"Selected agents: {[agent.__class__.__name__ for agent in selected_agents]}")
-            
-            # Run analysis with each selected agent
-            results = []
-            for agent in selected_agents:
-                if logger.getEffectiveLevel() <= logging.DEBUG:
-                    logger.debug(f"Running analysis with {agent.__class__.__name__}")
-                
-                # Run agent analysis with vector store
-                result = agent.analyze(query, self.vector_store)
-                
-                if logger.getEffectiveLevel() <= logging.DEBUG:
-                    logger.debug(f"Completed {agent.__class__.__name__} analysis")
-                
-                results.append(result)
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error in analysis: {str(e)}")
-            return [f"Analysis error: {str(e)}"]
+        # Initialize supervisor
+        self.supervisor = MultiAgentSupervisor(vector_store)
 
     def invoke(
         self,
@@ -155,16 +105,13 @@ class AnalysisAgent(Runnable, WorkflowNode):
             if logger.getEffectiveLevel() <= logging.DEBUG:
                 logger.debug(f"Processing query: {query}")
 
-            # Run analysis with selected agents
-            results = self._run_analysis(query)
+            # Run analysis with supervisor
+            results = self.supervisor.analyze(query)
             
             # Add results to messages
             for result in results:
-                # Format result to be more readable
-                formatted_result = f"\nAnalysis Result:\n{result}"
-                state.messages.append(AIMessage(content=formatted_result))
-                # Log result in non-debug mode
-                logger.info(formatted_result)
+                state.messages.append(result)
+                logger.info(result.content)
                 
             if logger.getEffectiveLevel() <= logging.DEBUG:
                 logger.debug(f"Added {len(results)} analysis results to state")

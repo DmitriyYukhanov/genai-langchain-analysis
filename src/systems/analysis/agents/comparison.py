@@ -9,7 +9,7 @@ class ComparisonAnalysisAgent(BaseAnalysisAgent):
     
     @property
     def agent_id(self) -> str:
-        return "comparison"
+        return "comparison_analyst"
 
     @property
     def capability(self) -> AgentCapability:

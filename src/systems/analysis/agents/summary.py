@@ -9,7 +9,7 @@ class SummaryAgent(BaseAnalysisAgent):
     
     @property
     def agent_id(self) -> str:
-        return "summary"
+        return "summary_analyst"
 
     @property
     def capability(self) -> AgentCapability:
@@ -27,15 +27,13 @@ class SummaryAgent(BaseAnalysisAgent):
 Context:
 {context}
 
+Role: summary analyst who knows how to find out statistics and figures, overall patterns, important highlights, notable outliers.
+
 Query: {question}
 
-Focus on:
-1. Key statistics and figures
-2. Overall patterns
-3. Important highlights
-4. Notable outliers
+Keep the summary focused and data-driven, with a focus on the most important information.
 
-Keep the summary focused and data-driven."""
+"""
     
     def _create_chain(self) -> RunnableSequence:
         """Create the summary analysis chain"""

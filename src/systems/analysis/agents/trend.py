@@ -9,7 +9,7 @@ class TrendAnalysisAgent(BaseAnalysisAgent):
     
     @property
     def agent_id(self) -> str:
-        return "trend"
+        return "trend_analyst"
 
     @property
     def capability(self) -> AgentCapability:

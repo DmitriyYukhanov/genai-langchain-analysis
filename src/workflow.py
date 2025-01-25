@@ -197,9 +197,6 @@ def main():
             error=None
         )
         
-        # Run the graph with progress tracking
-        previous_messages = set()
-        
         with ProgressManager() as progress:
             pipeline_task = progress.add_task(
                 description="Analysis Pipeline",
@@ -218,33 +215,6 @@ def main():
                         completed=float(len(node_tracker.completed_nodes)),
                         description=node_tracker.get_next_description()
                     )
-                    
-                    # Handle document processing results
-                    if output.get("processed_documents"):
-                        docs = output["processed_documents"]
-                        if not docs:
-                            logger.error("No documents were processed successfully")
-                            break
-                        if logger.getEffectiveLevel() <= logging.DEBUG:
-                            logger.debug(f"Processed {len(docs)} document chunks")
-                    
-                    # Print new AI messages
-                    if output.get("messages"):
-                        current_messages = set(msg.content for msg in output["messages"] if isinstance(msg, AIMessage))
-                        new_messages = current_messages - previous_messages
-                        
-                        for content in new_messages:
-                            # Print analysis results without any decorations in non-debug mode
-                            if args.debug:
-                                logger.info("\nAnalysis Result:")
-                                logger.info("=" * 80)
-                                logger.info(content)
-                                logger.info("=" * 80 + "\n")
-                            else:
-                                # Print analysis results with minimal formatting
-                                logger.info("\n" + content)
-                        
-                        previous_messages = current_messages
             
             # Ensure progress bar shows completion
             progress.update_task(
@@ -255,7 +225,7 @@ def main():
             progress.remove_task(pipeline_task)
 
         if args.debug:
-            logger.info("Analysis complete!")
+            logger.info("Workflow ended.")
 
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")

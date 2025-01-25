@@ -127,7 +127,7 @@ class ProgressManager:
                     refresh=True
                 )
                 # Small delay to ensure the update is visible
-                time.sleep(0.1)
+                time.sleep(0.5)
             self.progress.remove_task(task['id'])
             del self.tasks[task_key]
 
