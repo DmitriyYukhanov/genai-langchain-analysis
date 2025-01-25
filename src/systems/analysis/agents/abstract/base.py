@@ -59,8 +59,8 @@ class BaseAnalysisAgent(ABC):
             # Get relevant documents
             docs = vector_store.store.similarity_search(
                 query,
-                k=6,
-                fetch_k=10  # Fetch more candidates for better relevance
+                k=15,
+                fetch_k=20 
             )
             
             if logger.getEffectiveLevel() <= logging.DEBUG:
@@ -123,7 +123,7 @@ class BaseAnalysisAgent(ABC):
                 chain_type="stuff",
                 retriever=vector_store.store.as_retriever(
                     search_type="similarity",
-                    search_kwargs={"k": 6}
+                    search_kwargs={"k": 15}
                 ),
                 chain_type_kwargs={
                     "prompt": PromptTemplate(
